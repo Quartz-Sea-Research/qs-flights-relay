@@ -54,6 +54,21 @@ async function fetchFeed(feed) {
   return { status: res.status, ac: Array.isArray(data.ac) ? data.ac : [] };
 }
 
+// adsb.lol rate-limits per IP (GitHub runners included), so each feed gets a
+// retry with backoff instead of dropping the rest of the theater.
+async function fetchFeedWithRetry(feed, attempts = 3) {
+  let last;
+  for (let i = 0; i < attempts; i++) {
+    last = await fetchFeed(feed);
+    if (last.status === 429) {
+      await sleep(4000 * (i + 1));
+      continue;
+    }
+    return last;
+  }
+  return last;
+}
+
 async function main() {
   const byHex = new Map();
   const report = [];
@@ -61,10 +76,10 @@ async function main() {
   for (const feed of FEEDS) {
     let r;
     try {
-      r = await fetchFeed(feed);
+      r = await fetchFeedWithRetry(feed);
     } catch (e) {
       report.push({ feed: feed.name, error: String((e && e.name) || e) });
-      await sleep(400);
+      await sleep(1200);
       continue;
     }
     let kept = 0;
@@ -76,8 +91,7 @@ async function main() {
       kept++;
     }
     report.push({ feed: feed.name, status: r.status, got: r.ac.length, kept });
-    if (r.status === 429) break; // rate limited: stop and keep what we have
-    await sleep(400);            // spacing keeps us inside adsb.lol's limit
+    await sleep(1200); // spacing keeps us inside adsb.lol's per-IP rate limit
   }
 
   const payload = {
