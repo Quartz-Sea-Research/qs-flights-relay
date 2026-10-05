@@ -1,0 +1,43 @@
+name: flights relay
+
+# Snapshots public ADS-B (adsb.lol) every 10 minutes into flights.json, which
+# the QS Terminal Cloudflare Worker reads from raw.githubusercontent.com.
+# Cloudflare's egress IPs are blocked/rate-limited by the ADS-B networks, so the
+# fetch has to happen from GitHub's runners instead.
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: flights-relay
+  cancel-in-progress: false
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Collect live ADS-B snapshot
+        run: node collect.mjs
+
+      - name: Commit snapshot
+        run: |
+          git config user.name "qs-flights-relay[bot]"
+          git config user.email "relay@users.noreply.github.com"
+          git add flights.json
+          if git diff --cached --quiet; then
+            echo "No change since last snapshot."
+          else
+            git commit -m "snapshot $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            git push
+          fi
